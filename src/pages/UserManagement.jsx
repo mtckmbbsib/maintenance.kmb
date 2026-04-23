@@ -123,17 +123,30 @@ export const UserManagement = () => {
     try {
       if (editingId) {
         // Update Profile
-        const { error: updateError } = await supabase.from('profiles').update({
+        // Siapkan data update
+        const updateData = {
           nama: formData.nama,
           nrp: formData.nrp,
           jabatan: formData.jabatan,
           role: formData.role,
           site: formData.site,
-          foto: croppedImage,
-          password: formData.password // Simpan password teks saat edit
-        }).eq('id', editingId);
+          foto: croppedImage
+        };
+
+        // Hanya masukkan password ke update jika diisi oleh admin
+        if (formData.password) {
+          updateData.password = formData.password;
+        }
+
+        const { error: updateError } = await supabase
+          .from('profiles')
+          .update(updateData)
+          .eq('id', editingId);
+
+        console.log('Update result:', { data: updateData, error: updateError });
         if (updateError) throw updateError;
       } else {
+        console.log('Creating new user:', formData.username);
         // Create Auth WITHOUT overwriting current admin session
         // Kita buat client supabase sementara khusus untuk signup
         const tempSupabase = createClient(
