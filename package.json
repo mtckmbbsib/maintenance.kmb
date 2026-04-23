@@ -16,6 +16,7 @@
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-easy-crop": "^5.5.7",
+    "react-is": "^19.2.5",
     "react-router-dom": "^7.14.2",
     "recharts": "^3.8.1",
     "tailwind-merge": "^3.5.0"
@@ -33,7 +34,7 @@
     "globals": "^17.5.0",
     "postcss": "^8.5.10",
     "tailwindcss": "^4.2.4",
-    "vite": "^8.0.9",
+    "vite": "^7.1.5",
     "vite-plugin-pwa": "^1.2.0"
   }
 }
