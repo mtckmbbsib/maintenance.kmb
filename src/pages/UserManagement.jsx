@@ -21,6 +21,8 @@ export const UserManagement = () => {
   });
   const [submitLoading, setSubmitLoading] = useState(false);
   const [error, setError] = useState('');
+  const [showSuccess, setShowSuccess] = useState(false);
+  const [successMsg, setSuccessMsg] = useState('');
 
   const [imageSrc, setImageSrc] = useState(null);
   const [crop, setCrop] = useState({ x: 0, y: 0 });
@@ -198,7 +200,13 @@ export const UserManagement = () => {
       }
       setIsModalOpen(false);
       fetchUsers();
-      if (!editingId) alert('User berhasil dibuat. Admin tetap dalam sesi ini.');
+      if (!editingId) {
+        setSuccessMsg('User berhasil dibuat! Admin tetap dalam sesi ini.');
+      } else {
+        setSuccessMsg('Profil user berhasil diperbarui!');
+      }
+      setShowSuccess(true);
+      setTimeout(() => setShowSuccess(false), 5000);
     } catch (err) {
       setError(err.message);
     } finally {
@@ -344,6 +352,23 @@ export const UserManagement = () => {
             <Cropper image={imageSrc} crop={crop} zoom={zoom} aspect={1} onCropChange={setCrop} onCropComplete={onCropComplete} onZoomChange={setZoom} />
           </div>
           <div className="mt-6 flex gap-4"><button onClick={() => setImageSrc(null)} className="px-6 py-2 bg-card rounded-lg border border-border font-medium">Batal</button><button onClick={handleSaveCrop} className="px-6 py-2 bg-primary text-primary-foreground rounded-lg font-medium flex items-center gap-2"><Check size={18} /> Potong & Simpan</button></div>
+        </div>
+      )}
+      {/* Modern Success Toast */}
+      {showSuccess && (
+        <div className="fixed bottom-6 right-6 z-[100] animate-in slide-in-from-right-10 fade-in duration-300">
+          <div className="bg-emerald-600 text-white px-6 py-4 rounded-2xl shadow-2xl flex items-center gap-4 border border-emerald-400/20 backdrop-blur-md">
+            <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center shrink-0">
+              <Check size={24} className="text-white" />
+            </div>
+            <div className="pr-4">
+              <p className="font-bold text-sm">Berhasil!</p>
+              <p className="text-xs text-white/90">{successMsg}</p>
+            </div>
+            <button onClick={() => setShowSuccess(false)} className="p-1 hover:bg-white/10 rounded-lg transition-colors ml-auto">
+              <X size={18} />
+            </button>
+          </div>
         </div>
       )}
     </div>
