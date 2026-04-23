@@ -101,7 +101,8 @@ export const UserManagement = () => {
       nrp: user.nrp || '',
       jabatan: user.jabatan || '',
       role: user.role || 'User',
-      site: user.site || ''
+      site: user.site || '',
+      password: user.password || ''
     });
     setCroppedImage(user.foto);
     setError('');
@@ -128,7 +129,8 @@ export const UserManagement = () => {
           jabatan: formData.jabatan,
           role: formData.role,
           site: formData.site,
-          foto: croppedImage
+          foto: croppedImage,
+          password: formData.password // Simpan password teks saat edit
         }).eq('id', editingId);
         if (updateError) throw updateError;
       } else {
@@ -175,7 +177,8 @@ export const UserManagement = () => {
             jabatan: formData.jabatan,
             role: formData.role,
             site: formData.site,
-            foto: croppedImage
+            foto: croppedImage,
+            password: formData.password // Simpan password teks saat buat akun baru
           });
           if (profileError) throw profileError;
         }
@@ -208,6 +211,7 @@ export const UserManagement = () => {
                 <th className="px-6 py-4 font-medium">Pengguna</th>
                 <th className="px-6 py-4 font-medium">NRP</th>
                 <th className="px-6 py-4 font-medium">Jabatan & Site</th>
+                <th className="px-6 py-4 font-medium">Password</th>
                 <th className="px-6 py-4 font-medium">Role</th>
                 <th className="px-6 py-4 font-medium text-center">Aksi</th>
               </tr>
@@ -230,6 +234,7 @@ export const UserManagement = () => {
                     </td>
                     <td className="px-6 py-4 text-sm">{user.nrp}</td>
                     <td className="px-6 py-4"><p className="text-sm">{user.jabatan}</p><p className="text-xs text-foreground/60 flex items-center gap-1"><MapPin size={10}/> {user.site || '-'}</p></td>
+                    <td className="px-6 py-4 text-sm font-mono text-orange-500">{user.password || '******'}</td>
                     <td className="px-6 py-4">
                       <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${user.role === 'Admin' ? 'bg-purple-500/10 text-purple-500' : user.role === 'Mekanik' ? 'bg-orange-500/10 text-orange-500' : 'bg-blue-500/10 text-blue-500'}`}>{user.role}</span>
                     </td>
