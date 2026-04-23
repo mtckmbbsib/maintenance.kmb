@@ -1,0 +1,42 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 270 50% 10%;
+    
+    --primary: 262 83% 58%; /* purple 600 */
+    --primary-foreground: 210 40% 98%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 270 50% 10%;
+    
+    --border: 214.3 31.8% 91.4%;
+    --input: 214.3 31.8% 91.4%;
+  }
+
+  .dark {
+    --background: 270 50% 5%; /* very dark purple/black */
+    --foreground: 210 40% 98%;
+    
+    --primary: 262 83% 58%;
+    --primary-foreground: 210 40% 98%;
+    
+    --card: 270 50% 8%;
+    --card-foreground: 210 40% 98%;
+    
+    --border: 270 30% 15%;
+    --input: 270 30% 15%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-feature-settings: "rlig" 1, "calt" 1;
+  }
+}
