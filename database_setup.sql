@@ -194,10 +194,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS tr_update_sparepart_stok ON public.sparepart_history;
-DROP TRIGGER IF EXISTS update_stok_trigger ON public.sparepart_history;
-DROP TRIGGER IF EXISTS sparepart_stok_trigger ON public.sparepart_history;
-DROP TRIGGER IF EXISTS trigger_update_stok ON public.sparepart_history;
+-- Hapus SEMUA trigger yang mungkin ada di tabel history (otomatis mendeteksi nama apapun)
+DO $$ 
+DECLARE 
+    r RECORD;
+BEGIN
+    FOR r IN (
+        SELECT trigger_name, event_object_table 
+        FROM information_schema.triggers 
+        WHERE event_object_table = 'sparepart_history'
+          AND trigger_schema = 'public'
+    ) 
+    LOOP
+        EXECUTE 'DROP TRIGGER ' || r.trigger_name || ' ON public.' || r.event_object_table;
+    END LOOP;
+END $$;
+
 CREATE TRIGGER tr_update_sparepart_stok
 AFTER INSERT ON public.sparepart_history
 FOR EACH ROW EXECUTE FUNCTION update_sparepart_stok();
@@ -217,8 +229,22 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-DROP TRIGGER IF EXISTS tr_update_oil_consumable_stok ON public.oil_consumable_history;
-DROP TRIGGER IF EXISTS oil_stok_trigger ON public.oil_consumable_history;
+-- Hapus SEMUA trigger yang mungkin ada di tabel oil history
+DO $$ 
+DECLARE 
+    r RECORD;
+BEGIN
+    FOR r IN (
+        SELECT trigger_name, event_object_table 
+        FROM information_schema.triggers 
+        WHERE event_object_table = 'oil_consumable_history'
+          AND trigger_schema = 'public'
+    ) 
+    LOOP
+        EXECUTE 'DROP TRIGGER ' || r.trigger_name || ' ON public.' || r.event_object_table;
+    END LOOP;
+END $$;
+
 CREATE TRIGGER tr_update_oil_consumable_stok
 AFTER INSERT ON public.oil_consumable_history
 FOR EACH ROW EXECUTE FUNCTION update_oil_consumable_stok();
