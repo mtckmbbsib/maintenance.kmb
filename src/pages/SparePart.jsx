@@ -78,7 +78,7 @@ export const SparePart = () => {
         const { data: newSp, error: spError } = await supabase.from('spareparts').insert({
           nama_sparepart: formData.nama_sparepart,
           part_number: formData.part_number || null,
-          merk: formData.merk || null,
+          merk: formData.merk || '-',
           kategori: formData.kategori,
           satuan: formData.satuan,
           stok: 0
@@ -220,7 +220,7 @@ export const SparePart = () => {
               const { data: newSp, error: spError } = await supabase.from('spareparts').insert({
                 nama_sparepart: row['Nama Sparepart'],
                 part_number: row['Part Number'] || null,
-                merk: row['Merk'] || null,
+                merk: row['Merk'] || '-',
                 kategori: row['Kategori'],
                 satuan: row['Satuan'] || 'pcs',
                 stok: 0

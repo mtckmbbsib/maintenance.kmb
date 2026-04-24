@@ -144,7 +144,53 @@ DROP POLICY IF EXISTS "Authenticated users can insert oil history." ON public.oi
 CREATE POLICY "Authenticated users can insert oil history." ON public.oil_consumable_history FOR INSERT WITH CHECK (auth.role() = 'authenticated');
 
 -- ==============================================================================
--- 10. Tabel Service History & Detail
+-- 10. Tabel Units (Manajemen Unit / Alat)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.units (
+  id text PRIMARY KEY, -- Nomor Lambung, e.g. AFT-016
+  type text NOT NULL,  -- Kategori: Excavator, MMU, ANFO Truck, dll
+  pabrikan text NOT NULL,
+  model text NOT NULL,
+  current_hm integer DEFAULT 0,
+  site text,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.units ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Units viewable by everyone." ON public.units;
+CREATE POLICY "Units viewable by everyone." ON public.units FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admin can manage units." ON public.units;
+CREATE POLICY "Admin can manage units." ON public.units FOR ALL USING (true);
+
+-- ==============================================================================
+-- 11. Tabel Reports (Laporan Perbaikan / Weekly Service)
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.reports (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  unit_id text REFERENCES public.units(id) ON DELETE SET NULL,
+  type text NOT NULL, -- weekly, service, pump
+  sub_type text,
+  date_start date,
+  date_end date,
+  ma_percent numeric,
+  activities text,
+  remarks text,
+  checklist jsonb,
+  user_id uuid REFERENCES auth.users(id),
+  nama_user text,
+  status text DEFAULT 'Final',
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+ALTER TABLE public.reports ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Reports viewable by everyone." ON public.reports;
+CREATE POLICY "Reports viewable by everyone." ON public.reports FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can manage reports." ON public.reports;
+CREATE POLICY "Authenticated users can manage reports." ON public.reports FOR ALL USING (auth.role() = 'authenticated');
+
+-- ==============================================================================
+-- 12. Tabel Service History & Detail
 -- ==============================================================================
 CREATE TABLE IF NOT EXISTS public.service_records (
   id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
