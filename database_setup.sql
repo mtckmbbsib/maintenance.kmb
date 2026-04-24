@@ -1,13 +1,13 @@
 -- ==============================================================================
--- SCRIPT SETUP DATABASE & ADMIN BSIB MAINTENANCE
+-- SCRIPT SETUP DATABASE BSIB MAINTENANCE (MASTER)
 -- Jalankan script ini di menu "SQL Editor" pada Supabase Dashboard Anda.
 -- ==============================================================================
 
--- 1. Aktifkan ekstensi yang dibutuhkan (jika belum ada)
+-- 1. Aktifkan ekstensi yang dibutuhkan
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- 2. Buat tabel 'profiles' jika belum ada
+-- 2. Tabel Profiles
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
   username text UNIQUE NOT NULL,
@@ -21,91 +21,168 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   PRIMARY KEY (id)
 );
 
--- 3. Setup Row Level Security (RLS)
-ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
-
--- Kebijakan agar siapa saja bisa melihat profil (dibutuhkan untuk menampilkan tabel User Management)
-DROP POLICY IF EXISTS "Public profiles are viewable by everyone." ON public.profiles;
-CREATE POLICY "Public profiles are viewable by everyone." 
-  ON public.profiles FOR SELECT USING (true);
-
--- Kebijakan agar user dapat memperbarui datanya sendiri (atau insert)
-DROP POLICY IF EXISTS "Users can insert their own profile." ON public.profiles;
-CREATE POLICY "Users can insert their own profile." 
-  ON public.profiles FOR ALL USING (auth.uid() = id);
-
--- 4. Buat Akun Admin Master (auth.users & public.profiles)
-DO $$
-DECLARE
-  new_admin_id uuid := 'a1b2c3d4-e5f6-4a5b-8c7d-9e0f1a2b3c4d'; -- ID Statis untuk Admin
-BEGIN
-  -- Hapus jika sudah ada (untuk menghindari error unique constraint saat menjalankan ulang)
-  DELETE FROM auth.users WHERE id = new_admin_id OR email = 'admin@bsib.com';
-
-  -- Masukkan ke auth.users
-  INSERT INTO auth.users (
-    instance_id, id, aud, role, email, encrypted_password, email_confirmed_at, 
-    recovery_sent_at, last_sign_in_at, raw_app_meta_data, raw_user_meta_data, 
-    created_at, updated_at, confirmation_token, email_change, email_change_token_new, recovery_token
-  ) VALUES (
-    '00000000-0000-0000-0000-000000000000',
-    new_admin_id,
-    'authenticated',
-    'authenticated',
-    'admin@bsib.com', -- Format email dummy untuk login username
-    crypt('admin123', gen_salt('bf')), -- Password default
-    current_timestamp,
-    NULL,
-    NULL,
-    '{"provider":"email","providers":["email"]}',
-    '{}',
-    current_timestamp,
-    current_timestamp,
-    '',
-    '',
-    '',
-    ''
-  );
-
-  -- Masukkan ke public.profiles
-  INSERT INTO public.profiles (id, username, nama, nrp, jabatan, role, site)
-  VALUES (
-    new_admin_id,
-    'admin', -- Username untuk login
-    'Admin BSIB',
-    'NRP-000',
-    'Super Administrator',
-    'Admin',
-    'HO Balikpapan'
-  );
-
-END $$;
-
--- ==============================================================================
--- 5. Tabel Pemasukan Spare Part (spare_parts_in)
--- ==============================================================================
-CREATE TABLE IF NOT EXISTS public.spare_parts_in (
+-- 3. Tabel Spare Parts
+CREATE TABLE IF NOT EXISTS public.spareparts (
   id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
-  user_id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
-  nama_user text NOT NULL,
-  tanggal date NOT NULL,
-  kategori text NOT NULL,
   nama_sparepart text NOT NULL,
   part_number text,
-  jumlah integer NOT NULL CHECK (jumlah > 0),
+  merk text,
+  kategori text NOT NULL,
+  satuan text DEFAULT 'pcs',
+  stok integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- 4. Tabel Spare Part History
+CREATE TABLE IF NOT EXISTS public.sparepart_history (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  sparepart_id uuid REFERENCES public.spareparts(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES auth.users(id),
+  nama_user text,
+  tipe text NOT NULL, -- IN, OUT
+  jumlah integer NOT NULL,
+  tanggal date NOT NULL,
+  keterangan text,
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
 
--- RLS untuk spare_parts_in
-ALTER TABLE public.spare_parts_in ENABLE ROW LEVEL SECURITY;
+-- 5. Tabel Oil & General Consumables
+CREATE TABLE IF NOT EXISTS public.oil_consumables (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  nama_barang text NOT NULL,
+  kategori text NOT NULL, -- Lube, General Consumable
+  merk text,
+  satuan text DEFAULT 'Liter',
+  stok integer DEFAULT 0,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
--- Admin & Mekanik bisa melihat semua data pemasukan (Tabel Riwayat)
-DROP POLICY IF EXISTS "Spare parts viewable by everyone." ON public.spare_parts_in;
-CREATE POLICY "Spare parts viewable by everyone." 
-  ON public.spare_parts_in FOR SELECT USING (true);
+-- 6. Tabel Oil & Consumable History
+CREATE TABLE IF NOT EXISTS public.oil_consumable_history (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  oil_consumable_id uuid REFERENCES public.oil_consumables(id) ON DELETE CASCADE,
+  user_id uuid REFERENCES auth.users(id),
+  nama_user text,
+  tipe text NOT NULL, -- IN, OUT
+  jumlah integer NOT NULL,
+  tanggal date NOT NULL,
+  keterangan text,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
 
--- User hanya bisa memasukkan data (Insert) atas namanya sendiri
-DROP POLICY IF EXISTS "Users can insert spare parts." ON public.spare_parts_in;
-CREATE POLICY "Users can insert spare parts." 
-  ON public.spare_parts_in FOR INSERT WITH CHECK (auth.uid() = user_id);
+-- 7. Trigger untuk Update Stok Otomatis (Spareparts)
+CREATE OR REPLACE FUNCTION update_sparepart_stok()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    IF (NEW.tipe = 'IN') THEN
+      UPDATE public.spareparts SET stok = stok + NEW.jumlah, updated_at = now() WHERE id = NEW.sparepart_id;
+    ELSIF (NEW.tipe = 'OUT') THEN
+      UPDATE public.spareparts SET stok = stok - NEW.jumlah, updated_at = now() WHERE id = NEW.sparepart_id;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS tr_update_sparepart_stok ON public.sparepart_history;
+CREATE TRIGGER tr_update_sparepart_stok
+AFTER INSERT ON public.sparepart_history
+FOR EACH ROW EXECUTE FUNCTION update_sparepart_stok();
+
+-- 8. Trigger untuk Update Stok Otomatis (Oil & Consumables)
+CREATE OR REPLACE FUNCTION update_oil_consumable_stok()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF (TG_OP = 'INSERT') THEN
+    IF (NEW.tipe = 'IN') THEN
+      UPDATE public.oil_consumables SET stok = stok + NEW.jumlah, updated_at = now() WHERE id = NEW.oil_consumable_id;
+    ELSIF (NEW.tipe = 'OUT') THEN
+      UPDATE public.oil_consumables SET stok = stok - NEW.jumlah, updated_at = now() WHERE id = NEW.oil_consumable_id;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS tr_update_oil_consumable_stok ON public.oil_consumable_history;
+CREATE TRIGGER tr_update_oil_consumable_stok
+AFTER INSERT ON public.oil_consumable_history
+FOR EACH ROW EXECUTE FUNCTION update_oil_consumable_stok();
+
+-- 9. Setup Row Level Security (RLS)
+ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Public profiles are viewable by everyone." ON public.profiles;
+CREATE POLICY "Public profiles are viewable by everyone." ON public.profiles FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Users can manage own profile." ON public.profiles;
+CREATE POLICY "Users can manage own profile." ON public.profiles FOR ALL USING (auth.uid() = id);
+
+ALTER TABLE public.spareparts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Spareparts viewable by everyone." ON public.spareparts;
+CREATE POLICY "Spareparts viewable by everyone." ON public.spareparts FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admin can manage spareparts." ON public.spareparts;
+CREATE POLICY "Admin can manage spareparts." ON public.spareparts FOR ALL USING (true);
+
+ALTER TABLE public.sparepart_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Sparepart history viewable by everyone." ON public.sparepart_history;
+CREATE POLICY "Sparepart history viewable by everyone." ON public.sparepart_history FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can insert history." ON public.sparepart_history;
+CREATE POLICY "Authenticated users can insert history." ON public.sparepart_history FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+ALTER TABLE public.oil_consumables ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Oil consumables viewable by everyone." ON public.oil_consumables;
+CREATE POLICY "Oil consumables viewable by everyone." ON public.oil_consumables FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admin can manage oil consumables." ON public.oil_consumables;
+CREATE POLICY "Admin can manage oil consumables." ON public.oil_consumables FOR ALL USING (true);
+
+ALTER TABLE public.oil_consumable_history ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Oil history viewable by everyone." ON public.oil_consumable_history;
+CREATE POLICY "Oil history viewable by everyone." ON public.oil_consumable_history FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Authenticated users can insert oil history." ON public.oil_consumable_history;
+CREATE POLICY "Authenticated users can insert oil history." ON public.oil_consumable_history FOR INSERT WITH CHECK (auth.role() = 'authenticated');
+
+-- ==============================================================================
+-- 10. Tabel Service History & Detail
+-- ==============================================================================
+CREATE TABLE IF NOT EXISTS public.service_records (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  unit_id text NOT NULL REFERENCES public.units(id) ON DELETE CASCADE,
+  service_type text NOT NULL, -- Periodic Service, Repair, etc.
+  hm_service integer NOT NULL,
+  tanggal date NOT NULL,
+  keterangan text,
+  user_id uuid REFERENCES auth.users(id),
+  nama_user text,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.service_parts (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  service_id uuid REFERENCES public.service_records(id) ON DELETE CASCADE,
+  sparepart_id uuid REFERENCES public.spareparts(id),
+  jumlah integer NOT NULL,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS public.service_oils (
+  id uuid DEFAULT uuid_generate_v4() PRIMARY KEY,
+  service_id uuid REFERENCES public.service_records(id) ON DELETE CASCADE,
+  oil_consumable_id uuid REFERENCES public.oil_consumables(id),
+  jumlah integer NOT NULL,
+  created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
+);
+
+-- RLS for Service Records
+ALTER TABLE public.service_records ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service records viewable by everyone." ON public.service_records FOR SELECT USING (true);
+CREATE POLICY "Admin can manage service records." ON public.service_records FOR ALL USING (true);
+
+ALTER TABLE public.service_parts ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service parts viewable by everyone." ON public.service_parts FOR SELECT USING (true);
+CREATE POLICY "Admin can manage service parts." ON public.service_parts FOR ALL USING (true);
+
+ALTER TABLE public.service_oils ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "Service oils viewable by everyone." ON public.service_oils FOR SELECT USING (true);
+CREATE POLICY "Admin can manage service oils." ON public.service_oils FOR ALL USING (true);

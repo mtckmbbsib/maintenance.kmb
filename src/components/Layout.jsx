@@ -1,18 +1,29 @@
 import React, { useState } from 'react';
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { LayoutDashboard, Wrench, Package, Truck, FileText, Users, LogOut, Menu, X } from 'lucide-react';
+import { PageHeaderProvider, usePageHeader } from '../contexts/PageHeaderContext';
+import { LayoutDashboard, Wrench, Package, Truck, FileText, Users, LogOut, Menu, X, Droplets, ChevronRight } from 'lucide-react';
 
 export const Layout = () => {
+  return (
+    <PageHeaderProvider>
+      <LayoutInner />
+    </PageHeaderProvider>
+  );
+};
+
+const LayoutInner = () => {
   const { profile, signOut } = useAuth();
   const location = useLocation();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
+  const { breadcrumbs } = usePageHeader();
 
   const menuItems = [
     { path: '/', name: 'Dashboard', icon: <LayoutDashboard size={20} />, roles: ['Admin', 'Mekanik', 'User'] },
     { path: '/spare-part', name: 'Spare Part', icon: <Package size={20} />, roles: ['Admin', 'Mekanik'] },
+    { path: '/oil-consumable', name: 'Oil & Consumable', icon: <Droplets size={20} />, roles: ['Admin', 'Mekanik'] },
     { path: '/tools', name: 'Tools', icon: <Wrench size={20} />, roles: ['Admin', 'Mekanik'], isDev: true },
-    { path: '/unit', name: 'Unit', icon: <Truck size={20} />, roles: ['Admin', 'Mekanik'], isDev: true },
+    { path: '/unit', name: 'Unit', icon: <Truck size={20} />, roles: ['Admin', 'Mekanik'] },
     { path: '/report', name: 'Report', icon: <FileText size={20} />, roles: ['Admin', 'Mekanik'], isDev: true },
     { path: '/user-management', name: 'Manajemen User', icon: <Users size={20} />, roles: ['Admin'] },
   ];
@@ -22,6 +33,16 @@ export const Layout = () => {
   const handleSignOut = async () => {
     await signOut();
   };
+
+  // Determine default breadcrumb from current menu item
+  const currentMenu = menuItems.find(item => 
+    item.path !== '/' 
+      ? location.pathname.startsWith(item.path)
+      : location.pathname === '/'
+  );
+  const defaultLabel = currentMenu?.name || 'Dashboard';
+  // Use dynamic breadcrumbs if set by child page, otherwise fall back to menu name
+  const displayCrumbs = breadcrumbs.length > 0 ? breadcrumbs : [{ label: defaultLabel }];
 
   return (
     <div className="flex h-screen bg-background overflow-hidden">
@@ -106,6 +127,28 @@ export const Layout = () => {
 
       {/* Main Content */}
       <main className="flex-1 flex flex-col h-screen overflow-hidden pt-16 lg:pt-0">
+        {/* Sticky Page Header */}
+        <div className="shrink-0 sticky top-0 z-20 bg-background/80 backdrop-blur-xl border-b border-border/50 px-4 lg:px-8 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2 flex-wrap">
+            <div className="w-1.5 h-5 bg-primary rounded-full shrink-0" />
+            {displayCrumbs.map((crumb, i) => (
+              <React.Fragment key={i}>
+                {i > 0 && <ChevronRight size={14} className="text-foreground/30" />}
+                <span className={`text-sm font-bold tracking-tight ${
+                  i < displayCrumbs.length - 1 ? 'text-foreground/40' : 'text-foreground'
+                }`}>
+                  {crumb.label}
+                </span>
+              </React.Fragment>
+            ))}
+          </div>
+          <div className="flex items-center gap-2 text-xs text-foreground/40 shrink-0">
+            <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+            <span className="hidden sm:inline">{profile?.site || 'BSIB'}</span>
+          </div>
+        </div>
+
+        {/* Scrollable Content */}
         <div className="flex-1 overflow-y-auto p-4 lg:p-8">
           <Outlet />
         </div>

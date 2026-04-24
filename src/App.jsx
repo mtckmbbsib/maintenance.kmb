@@ -8,6 +8,10 @@ import { Dashboard } from './pages/Dashboard';
 
 import { UserManagement } from './pages/UserManagement';
 import { SparePart } from './pages/SparePart';
+import { OilGeneral } from './pages/OilGeneral';
+import { Reports } from './pages/Reports';
+import { UnitManagement } from './pages/UnitManagement';
+import { UnitServiceHistory } from './pages/UnitServiceHistory';
 
 // Placeholders for other pages
 const Placeholder = ({ title }) => (
@@ -34,9 +38,11 @@ function App() {
               {/* Accessible by Admin and Mekanik */}
               <Route element={<ProtectedRoute allowedRoles={['Admin', 'Mekanik']} />}>
                 <Route path="/spare-part" element={<SparePart />} />
+                <Route path="/oil-consumable" element={<OilGeneral />} />
                 <Route path="/tools" element={<Placeholder title="Tools" />} />
-                <Route path="/unit" element={<Placeholder title="Unit" />} />
-                <Route path="/report" element={<Placeholder title="Report" />} />
+                <Route path="/unit" element={<UnitManagement />} />
+                <Route path="/unit/:unitId/history" element={<UnitServiceHistory />} />
+                <Route path="/report" element={<Reports />} />
               </Route>
 
               {/* Only accessible by Admin */}
