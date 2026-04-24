@@ -207,7 +207,7 @@ export const SparePart = () => {
         // Ambil sheet pertama (bukan sheet Petunjuk)
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
+        const data = XLSX.utils.sheet_to_json(ws, { raw: true }); // raw true to get numbers for dates
 
         if (data.length === 0) {
           setError('File kosong atau format tidak sesuai. Pastikan menggunakan template yang benar.');
@@ -230,7 +230,16 @@ export const SparePart = () => {
             merk: (row['Merk'] && row['Merk'] !== '-') ? row['Merk'] : null,
             jumlah: parseInt(row['Jumlah'], 10) || 0,
             satuan: row['Satuan'] || 'pcs',
-            tanggal: row['Tanggal'] || new Date().toISOString().split('T')[0],
+            tanggal: (() => {
+              const rawDate = row['Tanggal'];
+              if (!rawDate) return new Date().toISOString().split('T')[0];
+              if (typeof rawDate === 'number') {
+                // Handle Excel serial date
+                const date = new Date((rawDate - 25569) * 86400 * 1000);
+                return date.toISOString().split('T')[0];
+              }
+              return rawDate;
+            })(),
             keterangan: row['Keterangan'] || 'Bulk Upload',
             isValid: errs.length === 0,
             errors: errs,
@@ -255,69 +264,41 @@ export const SparePart = () => {
     setError('');
     setBulkStatus({ total: validRows.length, current: 0, errors: [] });
 
-    let successCount = 0;
-    let errorList = [];
+    try {
+      // Create payload for RPC
+      const payload = validRows.map(row => ({
+        nama: row.nama,
+        partNumber: row.partNumber,
+        kategori: row.kategori,
+        satuan: row.satuan,
+        merk: row.merk,
+        jumlah: row.jumlah,
+        tanggal: row.tanggal,
+        keterangan: row.keterangan
+      }));
 
-    for (let i = 0; i < validRows.length; i++) {
-      const row = validRows[i];
-      try {
-        let spId;
-        const { data: existing, error: findError } = await supabase
-          .from('spareparts')
-          .select('id')
-          .eq('nama_sparepart', row.nama)
-          .eq('kategori', row.kategori)
-          .maybeSingle();
+      // Use RPC for atomicity (All or Nothing)
+      const { error: rpcError } = await supabase.rpc('bulk_upload_spareparts', {
+        payload: payload,
+        p_user_id: user.id,
+        p_nama_user: profile?.nama || 'Unknown'
+      });
 
-        if (findError) throw findError;
+      if (rpcError) throw rpcError;
 
-        if (existing) {
-          spId = existing.id;
-        } else {
-          const insertPayload = {
-            nama_sparepart: row.nama,
-            part_number: row.partNumber || null,
-            kategori: row.kategori,
-            satuan: row.satuan,
-            stok: 0,
-          };
-          if (row.merk) insertPayload.merk = row.merk;
-
-          const { data: newSp, error: spError } = await supabase
-            .from('spareparts')
-            .insert(insertPayload)
-            .select('id')
-            .single();
-          if (spError) throw spError;
-          spId = newSp.id;
-        }
-
-        const { error: histError } = await supabase.from('sparepart_history').insert({
-          sparepart_id: spId,
-          user_id: user.id,
-          nama_user: profile?.nama || 'Unknown',
-          tipe: 'IN',
-          jumlah: row.jumlah,
-          tanggal: row.tanggal,
-          keterangan: row.keterangan,
-        });
-        if (histError) throw histError;
-        successCount++;
-      } catch (err) {
-        errorList.push(`Baris ${row.rowNum} (${row.nama}): ${err.message}`);
-      }
-      setBulkStatus(prev => ({ ...prev, current: i + 1, errors: errorList }));
-    }
-
-    setSubmitLoading(false);
-
-    if (errorList.length > 0) {
-      setError(`${successCount} berhasil, ${errorList.length} gagal.`);
-    } else {
+      // If successful
       setPreviewData([]);
       setSelectedFileName('');
       setIsBulkModalOpen(false);
       fetchData();
+      setBulkStatus({ total: 0, current: 0, errors: [] });
+
+    } catch (err) {
+      console.error(err);
+      setError(`Upload Gagal: ${err.message}. Tidak ada data yang tersimpan.`);
+      setBulkStatus(prev => ({ ...prev, errors: [err.message] }));
+    } finally {
+      setSubmitLoading(false);
     }
   };
 
@@ -515,11 +496,19 @@ export const SparePart = () => {
                     onFocus={() => setShowSuggestions(true)}
                     onChange={(e) => {
                       const val = e.target.value;
-                      const selected = inventory.find(i => i.nama_sparepart === val && i.kategori === formData.kategori);
+                      // Find exact match (Name + Category + P/N)
+                      const selected = inventory.find(i => 
+                        i.nama_sparepart === val && 
+                        i.kategori === formData.kategori &&
+                        (i.part_number || '') === (formData.part_number || '')
+                      );
+                      
                       setFormData({ 
                         ...formData, 
                         sparepart_id: selected ? selected.id : '', 
                         nama_sparepart: val, 
+                        // Keep current part_number if not auto-selecting, 
+                        // or take it from the selected item if found
                         part_number: selected ? (selected.part_number || '') : formData.part_number 
                       });
                       setShowSuggestions(true);
@@ -580,7 +569,25 @@ export const SparePart = () => {
                     </div>
                     <div>
                       <label className="text-xs font-medium mb-1 block">Part Number (Opsional)</label>
-                      <input type="text" value={formData.part_number} onChange={e => setFormData({...formData, part_number: e.target.value})} className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 font-mono" placeholder="P/N jika ada" />
+                      <input 
+                        type="text" 
+                        value={formData.part_number} 
+                        onChange={e => {
+                          const pn = e.target.value;
+                          const selected = inventory.find(i => 
+                            i.nama_sparepart === formData.nama_sparepart && 
+                            i.kategori === formData.kategori &&
+                            (i.part_number || '') === (pn || '')
+                          );
+                          setFormData({
+                            ...formData,
+                            part_number: pn,
+                            sparepart_id: selected ? selected.id : ''
+                          });
+                        }} 
+                        className="w-full bg-background border border-border rounded-lg px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-primary/30 font-mono" 
+                        placeholder="P/N jika ada" 
+                      />
                     </div>
                   </div>
                 </div>

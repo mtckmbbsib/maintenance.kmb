@@ -7,6 +7,110 @@
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
+-- ==============================================================================
+-- 13. RPC Functions for Bulk Upload (Atomicity)
+-- ==============================================================================
+
+-- Bulk Upload Spareparts
+CREATE OR REPLACE FUNCTION public.bulk_upload_spareparts(
+  payload jsonb,
+  p_user_id uuid,
+  p_nama_user text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  row_item jsonb;
+  v_sp_id uuid;
+BEGIN
+  FOR row_item IN SELECT * FROM jsonb_array_elements(payload)
+  LOOP
+    -- 1. Get or create sparepart
+    SELECT id INTO v_sp_id 
+    FROM public.spareparts 
+    WHERE nama_sparepart = (row_item->>'nama') 
+      AND kategori = (row_item->>'kategori')
+      AND (part_number IS NOT DISTINCT FROM (row_item->>'partNumber'));
+
+    IF v_sp_id IS NULL THEN
+      INSERT INTO public.spareparts (nama_sparepart, part_number, kategori, satuan, merk, stok)
+      VALUES (
+        (row_item->>'nama'),
+        (row_item->>'partNumber'),
+        (row_item->>'kategori'),
+        (row_item->>'satuan'),
+        COALESCE((row_item->>'merk'), '-'),
+        0
+      )
+      RETURNING id INTO v_sp_id;
+    END IF;
+
+    -- 2. Insert history (this triggers the stock update)
+    INSERT INTO public.sparepart_history (sparepart_id, user_id, nama_user, tipe, jumlah, tanggal, keterangan)
+    VALUES (
+      v_sp_id,
+      p_user_id,
+      p_nama_user,
+      'IN',
+      (row_item->>'jumlah')::integer,
+      (row_item->>'tanggal')::date,
+      COALESCE((row_item->>'keterangan'), 'Bulk Upload')
+    );
+  END LOOP;
+END;
+$$;
+
+-- Bulk Upload Oil & Consumables
+CREATE OR REPLACE FUNCTION public.bulk_upload_oil_consumables(
+  payload jsonb,
+  p_user_id uuid,
+  p_nama_user text
+)
+RETURNS void
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+  row_item jsonb;
+  v_item_id uuid;
+BEGIN
+  FOR row_item IN SELECT * FROM jsonb_array_elements(payload)
+  LOOP
+    -- 1. Get or create item
+    SELECT id INTO v_item_id 
+    FROM public.oil_consumables 
+    WHERE nama_barang = (row_item->>'nama') 
+      AND kategori = (row_item->>'kategori');
+
+    IF v_item_id IS NULL THEN
+      INSERT INTO public.oil_consumables (nama_barang, kategori, satuan, merk, stok)
+      VALUES (
+        (row_item->>'nama'),
+        (row_item->>'kategori'),
+        (row_item->>'satuan'),
+        COALESCE((row_item->>'merk'), '-'),
+        0
+      )
+      RETURNING id INTO v_item_id;
+    END IF;
+
+    -- 2. Insert history (this triggers the stock update)
+    INSERT INTO public.oil_consumable_history (oil_consumable_id, user_id, nama_user, tipe, jumlah, tanggal, keterangan)
+    VALUES (
+      v_item_id,
+      p_user_id,
+      p_nama_user,
+      'IN',
+      (row_item->>'jumlah')::integer,
+      (row_item->>'tanggal')::date,
+      COALESCE((row_item->>'keterangan'), 'Bulk Upload')
+    );
+  END LOOP;
+END;
+$$;
+
 -- 2. Tabel Profiles
 CREATE TABLE IF NOT EXISTS public.profiles (
   id uuid NOT NULL REFERENCES auth.users(id) ON DELETE CASCADE,
@@ -33,6 +137,9 @@ CREATE TABLE IF NOT EXISTS public.spareparts (
   created_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL,
   updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()) NOT NULL
 );
+
+-- Unique index to prevent duplicate parts with same name, P/N, and category
+CREATE UNIQUE INDEX IF NOT EXISTS spareparts_identity_idx ON public.spareparts (nama_sparepart, COALESCE(part_number, ''), kategori);
 
 -- 4. Tabel Spare Part History
 CREATE TABLE IF NOT EXISTS public.sparepart_history (
@@ -222,13 +329,19 @@ CREATE TABLE IF NOT EXISTS public.service_oils (
 
 -- RLS for Service Records
 ALTER TABLE public.service_records ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service records viewable by everyone." ON public.service_records;
 CREATE POLICY "Service records viewable by everyone." ON public.service_records FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admin can manage service records." ON public.service_records;
 CREATE POLICY "Admin can manage service records." ON public.service_records FOR ALL USING (true);
 
 ALTER TABLE public.service_parts ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service parts viewable by everyone." ON public.service_parts;
 CREATE POLICY "Service parts viewable by everyone." ON public.service_parts FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admin can manage service parts." ON public.service_parts;
 CREATE POLICY "Admin can manage service parts." ON public.service_parts FOR ALL USING (true);
 
 ALTER TABLE public.service_oils ENABLE ROW LEVEL SECURITY;
+DROP POLICY IF EXISTS "Service oils viewable by everyone." ON public.service_oils;
 CREATE POLICY "Service oils viewable by everyone." ON public.service_oils FOR SELECT USING (true);
+DROP POLICY IF EXISTS "Admin can manage service oils." ON public.service_oils;
 CREATE POLICY "Admin can manage service oils." ON public.service_oils FOR ALL USING (true);

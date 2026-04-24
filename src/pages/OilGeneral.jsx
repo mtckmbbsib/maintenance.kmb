@@ -201,7 +201,7 @@ export const OilGeneral = () => {
         const wb = XLSX.read(bstr, { type: 'binary' });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws);
+        const data = XLSX.utils.sheet_to_json(ws, { raw: true });
 
         if (data.length === 0) {
           setError('File kosong atau format tidak sesuai.');
@@ -222,7 +222,15 @@ export const OilGeneral = () => {
             merk: (row['Merk'] && row['Merk'] !== '-') ? row['Merk'] : null,
             jumlah: parseInt(row['Jumlah'], 10) || 0,
             satuan: row['Satuan'] || 'Liter',
-            tanggal: row['Tanggal'] || new Date().toISOString().split('T')[0],
+            tanggal: (() => {
+              const rawDate = row['Tanggal'];
+              if (!rawDate) return new Date().toISOString().split('T')[0];
+              if (typeof rawDate === 'number') {
+                const date = new Date((rawDate - 25569) * 86400 * 1000);
+                return date.toISOString().split('T')[0];
+              }
+              return rawDate;
+            })(),
             keterangan: row['Keterangan'] || 'Bulk Upload',
             isValid: errs.length === 0,
             errors: errs,
@@ -238,6 +246,7 @@ export const OilGeneral = () => {
     reader.readAsBinaryString(file);
   };
 
+  // Step 2: Upload baris yang valid setelah user konfirmasi
   const handleBulkSubmit = async () => {
     const validRows = previewData.filter(r => r.isValid);
     if (validRows.length === 0) return;
@@ -246,67 +255,39 @@ export const OilGeneral = () => {
     setError('');
     setBulkStatus({ total: validRows.length, current: 0, errors: [] });
 
-    let successCount = 0;
-    let errorList = [];
+    try {
+      // Create payload for RPC
+      const payload = validRows.map(row => ({
+        nama: row.nama,
+        kategori: row.kategori,
+        satuan: row.satuan,
+        merk: row.merk,
+        jumlah: row.jumlah,
+        tanggal: row.tanggal,
+        keterangan: row.keterangan
+      }));
 
-    for (let i = 0; i < validRows.length; i++) {
-      const row = validRows[i];
-      try {
-        let itemId;
-        const { data: existing, error: findError } = await supabase
-          .from('oil_consumables')
-          .select('id')
-          .eq('nama_barang', row.nama)
-          .eq('kategori', row.kategori)
-          .maybeSingle();
+      // Use RPC for atomicity
+      const { error: rpcError } = await supabase.rpc('bulk_upload_oil_consumables', {
+        payload: payload,
+        p_user_id: user.id,
+        p_nama_user: profile?.nama || 'Unknown'
+      });
 
-        if (findError) throw findError;
+      if (rpcError) throw rpcError;
 
-        if (existing) {
-          itemId = existing.id;
-        } else {
-          const insertPayload = {
-            nama_barang: row.nama,
-            kategori: row.kategori,
-            satuan: row.satuan,
-            stok: 0,
-          };
-          if (row.merk) insertPayload.merk = row.merk;
-
-          const { data: newItem, error: itemError } = await supabase
-            .from('oil_consumables')
-            .insert(insertPayload)
-            .select('id')
-            .single();
-          if (itemError) throw itemError;
-          itemId = newItem.id;
-        }
-
-        const { error: histError } = await supabase.from('oil_consumable_history').insert({
-          oil_consumable_id: itemId,
-          user_id: user.id,
-          nama_user: profile?.nama || 'Unknown',
-          tipe: 'IN',
-          jumlah: row.jumlah,
-          tanggal: row.tanggal,
-          keterangan: row.keterangan,
-        });
-        if (histError) throw histError;
-        successCount++;
-      } catch (err) {
-        errorList.push(`Baris ${row.rowNum} (${row.nama}): ${err.message}`);
-      }
-      setBulkStatus(prev => ({ ...prev, current: i + 1, errors: errorList }));
-    }
-
-    setSubmitLoading(false);
-
-    if (errorList.length > 0) {
-      setError(`${successCount} berhasil, ${errorList.length} gagal.`);
-    } else {
+      // If successful
       resetBulkModal();
       setIsBulkModalOpen(false);
       fetchData();
+      setBulkStatus({ total: 0, current: 0, errors: [] });
+
+    } catch (err) {
+      console.error(err);
+      setError(`Upload Gagal: ${err.message}. Tidak ada data yang tersimpan.`);
+      setBulkStatus(prev => ({ ...prev, errors: [err.message] }));
+    } finally {
+      setSubmitLoading(false);
     }
   };
 
