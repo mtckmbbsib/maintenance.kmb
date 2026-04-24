@@ -245,15 +245,10 @@ export const Reports = () => {
 
       if (srvError) throw srvError;
 
-      // 3. Process Spare Part Deductions
-      for (const part of formData.usedParts) {
-        // Update Stock
-        const { data: currentPart } = await supabase.from('spareparts').select('stok').eq('id', part.id).single();
-        const newStock = (currentPart?.stok || 0) - part.qty;
-        await supabase.from('spareparts').update({ stok: newStock }).eq('id', part.id);
-
-        // Record History
-        await supabase.from('sparepart_history').insert({
+        // 3. Process Spare Part Deductions
+        for (const part of formData.usedParts) {
+          // Record History (Trigger database akan otomatis mengurangi stok di tabel spareparts)
+          await supabase.from('sparepart_history').insert({
           sparepart_id: part.id,
           user_id: authUser.id,
           nama_user: profile?.nama || 'System',
@@ -271,13 +266,10 @@ export const Reports = () => {
         });
       }
 
-      // 4. Process Oil Deductions
-      for (const oil of formData.usedOils) {
-        const { data: currentOil } = await supabase.from('oil_consumables').select('stok').eq('id', oil.id).single();
-        const newStock = (currentOil?.stok || 0) - oil.qty;
-        await supabase.from('oil_consumables').update({ stok: newStock }).eq('id', oil.id);
-
-        await supabase.from('oil_consumable_history').insert({
+        // 4. Process Oil Deductions
+        for (const oil of formData.usedOils) {
+          // Record History (Trigger database akan otomatis mengurangi stok)
+          await supabase.from('oil_consumable_history').insert({
           oil_consumable_id: oil.id,
           user_id: authUser.id,
           nama_user: profile?.nama || 'System',
