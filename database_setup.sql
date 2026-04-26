@@ -24,22 +24,41 @@ AS $$
 DECLARE
   row_item jsonb;
   v_sp_id uuid;
+  v_part_num text;
+  v_nama text;
+  v_kategori text;
 BEGIN
   FOR row_item IN SELECT * FROM jsonb_array_elements(payload)
   LOOP
-    -- 1. Get or create sparepart
+    v_nama := TRIM(row_item->>'nama');
+    v_part_num := TRIM(row_item->>'partNumber');
+    v_kategori := TRIM(row_item->>'kategori');
+
+    -- 1. Cari sparepart yang sudah ada
+    -- Kita coba cari berdasarkan kombinasi Nama, P/N, dan Kategori (Case Insensitive & Trimmed)
     SELECT id INTO v_sp_id 
     FROM public.spareparts 
-    WHERE nama_sparepart = (row_item->>'nama') 
-      AND kategori = (row_item->>'kategori')
-      AND (part_number IS NOT DISTINCT FROM (row_item->>'partNumber'));
+    WHERE LOWER(TRIM(nama_sparepart)) = LOWER(v_nama)
+      AND LOWER(TRIM(kategori)) = LOWER(v_kategori)
+      AND (
+        (part_number IS NULL AND (v_part_num IS NULL OR v_part_num = ''))
+        OR 
+        (LOWER(TRIM(part_number)) = LOWER(v_part_num))
+      );
 
+    -- 1.1 Jika masih tidak ketemu, tapi ada Part Number, coba cari berdasarkan Part Number saja 
+    -- (Ini untuk menangani jika Nama atau Kategori di Excel sedikit berbeda tapi P/N-nya sama)
+    IF v_sp_id IS NULL AND v_part_num IS NOT NULL AND v_part_num <> '' THEN
+      SELECT id INTO v_sp_id FROM public.spareparts WHERE LOWER(TRIM(part_number)) = LOWER(v_part_num);
+    END IF;
+
+    -- 2. Jika benar-benar tidak ditemukan, baru INSERT
     IF v_sp_id IS NULL THEN
       INSERT INTO public.spareparts (nama_sparepart, part_number, kategori, satuan, merk, stok)
       VALUES (
-        (row_item->>'nama'),
-        (row_item->>'partNumber'),
-        (row_item->>'kategori'),
+        v_nama,
+        v_part_num,
+        v_kategori,
         (row_item->>'satuan'),
         COALESCE((row_item->>'merk'), '-'),
         0
@@ -47,7 +66,8 @@ BEGIN
       RETURNING id INTO v_sp_id;
     END IF;
 
-    -- 2. Insert history (this triggers the stock update)
+    -- 3. Masukkan ke history (hanya jika jumlah > 0 atau jika ingin tetap mencatat history 0)
+    -- User meminta kuantiti 0 tetap bisa dimasukkan sebagai "input data"
     INSERT INTO public.sparepart_history (sparepart_id, user_id, nama_user, tipe, jumlah, tanggal, keterangan)
     VALUES (
       v_sp_id,

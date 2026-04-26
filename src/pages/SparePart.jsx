@@ -204,37 +204,66 @@ export const SparePart = () => {
       try {
         const bstr = evt.target.result;
         const wb = XLSX.read(bstr, { type: 'binary' });
-        // Ambil sheet pertama (bukan sheet Petunjuk)
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
-        const data = XLSX.utils.sheet_to_json(ws, { raw: true }); // raw true to get numbers for dates
+        const data = XLSX.utils.sheet_to_json(ws, { raw: true });
 
         if (data.length === 0) {
-          setError('File kosong atau format tidak sesuai. Pastikan menggunakan template yang benar.');
+          setError('File kosong atau format tidak sesuai.');
           return;
         }
 
-        // Validasi tiap baris → buat preview object
+        // Validasi & Pencarian Pintar
         const processed = data.map((row, i) => {
           const errs = [];
           if (!row['Kategori']) errs.push('Kategori kosong');
-          else if (!categories.includes(row['Kategori'])) errs.push(`Kategori "${row['Kategori']}" tidak valid`);
           if (!row['Nama Sparepart']) errs.push('Nama Sparepart kosong');
-          if (!row['Jumlah'] || isNaN(parseInt(row['Jumlah'], 10))) errs.push('Jumlah harus angka');
+          if (row['Jumlah'] === undefined || row['Jumlah'] === null || row['Jumlah'] === '') errs.push('Jumlah kosong');
+
+          const rowPN = row['Part Number'] ? String(row['Part Number']).trim() : null;
+          const rowNama = row['Nama Sparepart'] ? String(row['Nama Sparepart']).trim() : '';
+          const rowKategori = row['Kategori'] ? String(row['Kategori']).trim() : '';
+
+          // --- SMART SEARCH LOGIC ---
+          const exactMatch = inventory.find(inv => 
+            inv.nama_sparepart.toLowerCase() === rowNama.toLowerCase() &&
+            (inv.part_number || '').toLowerCase() === (rowPN || '').toLowerCase() &&
+            inv.kategori === rowKategori
+          );
+
+          const pnMatch = !exactMatch && rowPN ? inventory.find(inv => (inv.part_number || '').toLowerCase() === rowPN.toLowerCase()) : null;
+          const nameMatch = !exactMatch && !pnMatch ? inventory.find(inv => inv.nama_sparepart.toLowerCase() === rowNama.toLowerCase()) : null;
+
+          let smartStatus = 'NEW';
+          let matchItem = null;
+          let message = '';
+
+          if (exactMatch) {
+            smartStatus = 'EXACT';
+            matchItem = exactMatch;
+            message = 'Item Terdaftar (Tambah Stok)';
+          } else if (pnMatch) {
+            smartStatus = 'CONFLICT_PN';
+            matchItem = pnMatch;
+            message = `P/N sama dengan "${pnMatch.nama_sparepart}"`;
+          } else if (nameMatch) {
+            smartStatus = 'CONFLICT_NAME';
+            matchItem = nameMatch;
+            message = `Nama sama dengan item P/N: ${nameMatch.part_number || '-'}`;
+          }
 
           return {
             rowNum: i + 1,
-            kategori: row['Kategori'] || '-',
-            nama: row['Nama Sparepart'] || '-',
-            partNumber: row['Part Number'] || null,
-            merk: (row['Merk'] && row['Merk'] !== '-') ? row['Merk'] : null,
+            kategori: rowKategori,
+            nama: rowNama,
+            partNumber: rowPN,
+            merk: row['Merk'] || '-',
             jumlah: parseInt(row['Jumlah'], 10) || 0,
             satuan: row['Satuan'] || 'pcs',
             tanggal: (() => {
               const rawDate = row['Tanggal'];
               if (!rawDate) return new Date().toISOString().split('T')[0];
               if (typeof rawDate === 'number') {
-                // Handle Excel serial date
                 const date = new Date((rawDate - 25569) * 86400 * 1000);
                 return date.toISOString().split('T')[0];
               }
@@ -243,6 +272,12 @@ export const SparePart = () => {
             keterangan: row['Keterangan'] || 'Bulk Upload',
             isValid: errs.length === 0,
             errors: errs,
+            // Smart Fields
+            smartStatus,
+            matchItem,
+            message,
+            finalAction: smartStatus === 'EXACT' ? 'MERGE' : (smartStatus === 'NEW' ? 'CREATE' : 'PENDING'),
+            targetId: exactMatch ? exactMatch.id : null
           };
         });
 
@@ -257,46 +292,57 @@ export const SparePart = () => {
 
   // Step 2: Upload baris yang valid setelah user konfirmasi
   const handleBulkSubmit = async () => {
-    const validRows = previewData.filter(r => r.isValid);
-    if (validRows.length === 0) return;
+    const validRows = previewData.filter(r => r.isValid && r.finalAction !== 'PENDING');
+    if (validRows.length === 0) {
+      setError('Harap selesaikan konfirmasi pada item yang ditandai.');
+      return;
+    }
 
     setSubmitLoading(true);
     setError('');
-    setBulkStatus({ total: validRows.length, current: 0, errors: [] });
 
     try {
-      // Create payload for RPC
-      const payload = validRows.map(row => ({
-        nama: row.nama,
-        partNumber: row.partNumber,
-        kategori: row.kategori,
-        satuan: row.satuan,
-        merk: row.merk,
-        jumlah: row.jumlah,
-        tanggal: row.tanggal,
-        keterangan: row.keterangan
-      }));
+      // 1. Filter yang butuh INSERT (Aksi CREATE)
+      const rowsToCreate = validRows.filter(r => r.finalAction === 'CREATE');
+      
+      // 2. Lakukan insert satu per satu atau batch
+      // Untuk kesederhanaan dan agar kita dapat ID-nya, kita gunakan insert biasa
+      for (const row of validRows) {
+        let spId = row.targetId;
 
-      // Use RPC for atomicity (All or Nothing)
-      const { error: rpcError } = await supabase.rpc('bulk_upload_spareparts', {
-        payload: payload,
-        p_user_id: user.id,
-        p_nama_user: profile?.nama || 'Unknown'
-      });
+        if (row.finalAction === 'CREATE') {
+          const { data: newSp, error: spError } = await supabase.from('spareparts').insert({
+            nama_sparepart: row.nama,
+            part_number: row.partNumber || null,
+            merk: row.merk || '-',
+            kategori: row.kategori,
+            satuan: row.satuan,
+            stok: 0
+          }).select().single();
+          if (spError) throw spError;
+          spId = newSp.id;
+        }
 
-      if (rpcError) throw rpcError;
+        // 3. Insert History
+        const { error: histError } = await supabase.from('sparepart_history').insert({
+          sparepart_id: spId,
+          user_id: user.id,
+          nama_user: profile?.nama || 'Unknown',
+          tipe: 'IN',
+          jumlah: row.jumlah,
+          tanggal: row.tanggal,
+          keterangan: row.keterangan
+        });
+        if (histError) throw histError;
+      }
 
-      // If successful
       setPreviewData([]);
       setSelectedFileName('');
       setIsBulkModalOpen(false);
       fetchData();
-      setBulkStatus({ total: 0, current: 0, errors: [] });
-
     } catch (err) {
       console.error(err);
-      setError(`Upload Gagal: ${err.message}. Tidak ada data yang tersimpan.`);
-      setBulkStatus(prev => ({ ...prev, errors: [err.message] }));
+      setError(`Upload Gagal: ${err.message}`);
     } finally {
       setSubmitLoading(false);
     }
@@ -596,7 +642,7 @@ export const SparePart = () => {
               <div className="grid grid-cols-3 gap-4">
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Jumlah</label>
-                  <input type="number" min="1" required value={formData.jumlah} onChange={e => setFormData({...formData, jumlah: e.target.value})} className="w-full bg-background border border-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-primary/50" placeholder="0" />
+                  <input type="number" min="0" required value={formData.jumlah} onChange={e => setFormData({...formData, jumlah: e.target.value})} className="w-full bg-background border border-border rounded-xl px-4 py-2.5 outline-none focus:ring-2 focus:ring-primary/50" placeholder="0" />
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-1.5">Satuan</label>
@@ -778,14 +824,62 @@ export const SparePart = () => {
                             </td>
                             <td className="px-4 py-3 text-right font-bold">{row.jumlah} {row.satuan}</td>
                             <td className="px-4 py-3">
-                              {row.isValid ? (
-                                <span className="text-emerald-500 flex items-center gap-1 font-bold"><Check size={12}/> Siap</span>
-                              ) : (
+                              {!row.isValid ? (
                                 <div className="text-red-500 group relative cursor-help">
                                   <span className="flex items-center gap-1 font-bold underline decoration-dotted underline-offset-2"><AlertCircle size={12}/> Error</span>
                                   <div className="absolute bottom-full left-0 mb-2 w-48 p-2 bg-red-600 text-white text-[10px] rounded shadow-xl hidden group-hover:block z-20 animate-in fade-in zoom-in-95">
                                     {row.errors.join(', ')}
                                   </div>
+                                </div>
+                              ) : (
+                                <div className="flex flex-col gap-1">
+                                  {/* Exact Match Status */}
+                                  {row.smartStatus === 'EXACT' && (
+                                    <span className="text-emerald-500 flex items-center gap-1 font-bold"><Check size={12}/> Terdaftar (Merge)</span>
+                                  )}
+                                  
+                                  {/* NEW Item Status */}
+                                  {row.smartStatus === 'NEW' && (
+                                    <span className="text-foreground/50 flex items-center gap-1 font-bold"><Plus size={12}/> Item Baru</span>
+                                  )}
+
+                                  {/* CONFLICT Status & Actions */}
+                                  {(row.smartStatus === 'CONFLICT_PN' || row.smartStatus === 'CONFLICT_NAME') && (
+                                    <div className="flex flex-col gap-1.5">
+                                      <div className="flex items-center gap-1 text-amber-500 font-bold">
+                                        <AlertCircle size={12}/> 
+                                        <span>{row.finalAction === 'PENDING' ? 'Perlu Konfirmasi' : (row.finalAction === 'MERGE' ? 'Digabung' : 'Buat Baru')}</span>
+                                      </div>
+                                      <p className="text-[9px] text-foreground/60 leading-tight italic">{row.message}</p>
+                                      
+                                      {row.finalAction === 'PENDING' && (
+                                        <div className="flex gap-1 mt-1">
+                                          <button 
+                                            onClick={() => {
+                                              const updated = [...previewData];
+                                              updated[idx].finalAction = 'MERGE';
+                                              updated[idx].targetId = row.matchItem.id;
+                                              setPreviewData(updated);
+                                            }}
+                                            className="px-2 py-1 bg-amber-500/10 hover:bg-amber-500/20 text-amber-600 rounded text-[9px] font-bold transition-colors"
+                                          >
+                                            Gabung
+                                          </button>
+                                          <button 
+                                            onClick={() => {
+                                              const updated = [...previewData];
+                                              updated[idx].finalAction = 'CREATE';
+                                              updated[idx].targetId = null;
+                                              setPreviewData(updated);
+                                            }}
+                                            className="px-2 py-1 bg-foreground/5 hover:bg-foreground/10 text-foreground/60 rounded text-[9px] font-bold transition-colors"
+                                          >
+                                            Item Baru
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
                               )}
                             </td>
