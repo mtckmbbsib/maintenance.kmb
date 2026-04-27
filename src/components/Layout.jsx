@@ -49,7 +49,7 @@ const LayoutInner = () => {
       {/* Mobile menu button */}
       <div className="lg:hidden fixed top-0 left-0 w-full bg-card z-50 px-4 py-3 flex justify-between items-center border-b">
         <div className="font-bold text-xl text-primary flex items-center gap-2">
-          <Wrench className="text-primary" /> BSIB Maint
+          <Wrench className="text-primary" /> Maintenance Dept
         </div>
         <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)} className="p-2">
           {isMobileMenuOpen ? <X /> : <Menu />}
@@ -63,8 +63,9 @@ const LayoutInner = () => {
         ${isMobileMenuOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}
       `}>
         <div className="h-16 flex items-center px-6 border-b hidden lg:flex">
-          <div className="font-bold text-2xl text-primary flex items-center gap-2">
-            <Wrench className="text-primary" /> BSIB
+          <div className="font-bold text-xl text-primary flex items-center gap-2 leading-none">
+            <Wrench className="text-primary shrink-0" /> 
+            <span>Maintenance Departement</span>
           </div>
         </div>
 
